@@ -1,0 +1,8 @@
+services:
+  api:
+    build: .
+    ports:
+      - "5151:3000"
+    environment:
+      PORT: 3000
+      CHESS_API_USER_AGENT: chess-tilt-bot/1.0
