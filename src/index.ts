@@ -5,7 +5,7 @@ import {
   calculateTilt,
   calculateTiltDistribution,
   concessionPenalty,
-  recencyWeight,
+  gameWeights,
   type Tilt,
   type TiltDistributionEntry,
 } from './tilt.ts';
@@ -51,7 +51,7 @@ function verdict(tiltScore: number): string {
   if (tiltScore < 25) return 'calm';
   if (tiltScore < 50) return 'skewed';
   if (tiltScore < 75) return 'tilted';
-  return 'spinning';
+  return 'Frothing';
 }
 
 function meanAccuracy(games: GameHistory[]): string {
@@ -115,6 +115,7 @@ function renderReport({ subject, opponentOf, avatar, games, tilt, distribution }
   const losses = games.filter((game) => game.result === 'loss').length;
   const conceded = games.filter((game) => game.conceded);
   const concession = concessionPenalty(games);
+  const weights = gameWeights(games);
 
   const gameRows = games
     .map(
@@ -126,7 +127,7 @@ function renderReport({ subject, opponentOf, avatar, games, tilt, distribution }
         <td><span class="opening" title="${escapeHtml(game.opening ?? '')}">${escapeHtml(game.opening ?? '—')}</span></td>
         <td>${game.playedEnglundGambit ? '<span class="tag">Englund</span>' : ''}</td>
         <td>${game.accuracy?.toFixed(1) ?? '—'}</td>
-        <td>${recencyWeight(index).toFixed(2)}</td>
+        <td>${weights[index]?.toFixed(2) ?? '—'}</td>
       </tr>`,
     )
     .join('');

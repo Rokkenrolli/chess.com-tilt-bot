@@ -1,7 +1,13 @@
 import type { GameHistory, GameResult } from './chessApi.ts';
 
-/** How fast older games stop mattering: weight of game i is DECAY ** i, newest game first. */
-export const DECAY = 0.7;
+/** How fast older games stop mattering by position in the window, newest game first. */
+export const DECAY = 0.85;
+
+/** Wall-clock decay: a game this many hours before the anchor counts half as much. */
+const TIME_HALF_LIFE_HOURS = 24;
+/** However long ago it was, a game inside the window never stops counting entirely. */
+const MIN_TIME_WEIGHT = 0.25;
+const HOUR_SECONDS = 3600;
 
 const ENGLUND_BONUS = 10;
 
@@ -31,24 +37,37 @@ export type TiltDistributionEntry = {
   usedEnglundGambit: boolean;
 };
 
-export function recencyWeight(index: number): number {
-  return DECAY ** index;
+/**
+ * How much each game in the window counts: its position in the window times how long before the
+ * anchor game it was actually played, so an evening of blitz outweighs games from last week.
+ * Both are measured from the newest game in the window, never from the current time, so a pinned
+ * historical window keeps scoring the way it did on the day.
+ */
+export function gameWeights(gameHistory: GameHistory[]): number[] {
+  const anchor = gameHistory[0];
+  if (!anchor) return [];
+
+  return gameHistory.map((game, index) => {
+    const ageHours = Math.max(0, anchor.endTime - game.endTime) / HOUR_SECONDS;
+    const timeWeight = Math.max(MIN_TIME_WEIGHT, 0.5 ** (ageHours / TIME_HALF_LIFE_HOURS));
+    return DECAY ** index * timeWeight;
+  });
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-/** Losses hurt more the fresher they are, normalised so the term still spans 0…1. */
-function weightedLossRate(gameHistory: GameHistory[]): number {
+/** Weighted mean of a per-game value, normalised so a 0…1 value stays in 0…1. */
+function weightedAverage(gameHistory: GameHistory[], value: (game: GameHistory) => number): number {
+  const weights = gameWeights(gameHistory);
   let weighted = 0;
   let total = 0;
   gameHistory.forEach((game, index) => {
-    const weight = recencyWeight(index);
-    weighted += weight * LOSS_VALUE[game.result];
-    total += weight;
+    weighted += weights[index]! * value(game);
+    total += weights[index]!;
   });
-  return weighted / total;
+  return total === 0 ? 0 : weighted / total;
 }
 
 /** How far the player fell short of their own best game in the window. */
@@ -79,16 +98,9 @@ function concessionSeverity(game: GameHistory): number {
   return game.playedEnglundGambit ? severity * ENGLUND_CONCESSION_MULTIPLIER : severity;
 }
 
-/** Extra points for the games the player handed over, recency-weighted like the loss rate. */
+/** Extra points for the games the player handed over, weighted like the loss rate. */
 export function concessionPenalty(gameHistory: GameHistory[]): number {
-  let weighted = 0;
-  let total = 0;
-  gameHistory.forEach((game, index) => {
-    const weight = recencyWeight(index);
-    weighted += weight * concessionSeverity(game);
-    total += weight;
-  });
-  return total === 0 ? 0 : CONCESSION_WEIGHT * (weighted / total);
+  return CONCESSION_WEIGHT * weightedAverage(gameHistory, concessionSeverity);
 }
 
 function trailingLossRatio(gameHistory: GameHistory[]): number {
@@ -102,7 +114,7 @@ export function calculateTilt(gameHistory: GameHistory[]): Tilt {
   if (gameHistory.length === 0) return { tiltScore: 0, tiltInRadians: 0, englundBonus };
 
   const raw =
-    0.5 * weightedLossRate(gameHistory) +
+    0.5 * weightedAverage(gameHistory, (game) => LOSS_VALUE[game.result]) +
     0.3 * accuracyDrop(gameHistory) +
     0.2 * trailingLossRatio(gameHistory);
 
